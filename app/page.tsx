@@ -406,6 +406,7 @@ export default function HomePage() {
             </select>
             <small>{testMode === "vertical" ? "1 张候选封面 + 9 张参考封面，按两列五行排列，模拟双列信息流向下浏览。" : "1 张候选封面 + 3 张参考封面同时出现，作为四宫格对比基线。"}</small>
           </label>
+          <p className="reference-library-note">参考图库已接入 100 张模拟封面：根据小红书参考封面逐张通过 imagegen 生成，并非真实发布的封面。每次按权重抽取，两个候选版本共用同一组参考图。</p>
           <label className="model-field" htmlFor="model-provider">
             <span>使用模型</span>
             <select id="model-provider" value={modelProvider} onChange={(event) => { setModelProvider(event.target.value as ModelProvider); setError(""); }} disabled={isRunning}>
@@ -444,7 +445,7 @@ export default function HomePage() {
             <div className="feed-preview-heading"><div><p className="feed-preview-label" id="feed-preview-title">AI {test.testMode === "vertical" ? "纵向信息流" : "四宫格"}预览</p><p className="feed-preview-description">这是模型实际看到的带标题信息流示例。</p></div><div className="feed-preview-actions"><a href={test.feedPreviewUrl} target="_blank" rel="noreferrer">打开大图</a><a href={test.feedPreviewUrl} download={`ai-feed-preview-${test.id}.jpg`}>保存图片</a></div></div>
             <a className="feed-preview-image-link" href={test.feedPreviewUrl} target="_blank" rel="noreferrer"><img className="feed-preview-image" src={test.feedPreviewUrl} alt={`AI 模拟信息流${test.testMode === "vertical" ? "纵向" : "四宫格"}预览`} /></a>
             {test.feedPreviewUrls?.B && test.feedPreviewUrls.B !== test.feedPreviewUrl && <div className="feed-preview-secondary"><p>封面 B 的同条件预览</p><a className="feed-preview-image-link" href={test.feedPreviewUrls.B} target="_blank" rel="noreferrer"><img className="feed-preview-image" src={test.feedPreviewUrls.B} alt={`候选封面 B 的 AI ${test.testMode === "vertical" ? "纵向信息流" : "四宫格"}预览`} /></a></div>}
-            <p className="feed-preview-note">两个版本共用同一组参考封面和位置计划，分别按{test.testMode === "vertical" ? "双列五行纵向信息流" : "四宫格"}场景进行判断。</p>
+            <p className="feed-preview-note">两个版本共用同一组模拟参考封面和位置计划，分别按{test.testMode === "vertical" ? "双列五行纵向信息流" : "四宫格"}场景进行判断。参考图通过 imagegen 生成，并非真实发布的封面。</p>
           </section>}
           <div className="result-explanation">
             <p>选择率表示 100 个模拟用户在当前测试场景中选择该版本的次数。</p>

@@ -5,12 +5,12 @@ import path from "node:path";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import sharp from "sharp";
-import { createReferenceFixtures } from "./reference-fixtures.mjs";
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cover-http-"));
-const fixtureLibrary = await createReferenceFixtures(directory, 9);
+const referenceLibrary = JSON.parse(fs.readFileSync("data/reference-covers.json", "utf8"));
+assert.equal(referenceLibrary.length, 100);
 const headers = { "x-simulator-client": "local" };
 let mode = "normal", requests = 0, active = 0, peak = 0;
 let child, base, logs = "";
@@ -41,7 +41,7 @@ async function until(check, timeout=60000) {
 async function start() {
   const probe=http.createServer();probe.listen(0,"127.0.0.1");await once(probe,"listening");const port=probe.address().port;await new Promise(r=>probe.close(r));
   base=`http://127.0.0.1:${port}`;
-  child=spawn(process.execPath,["node_modules/next/dist/bin/next","start","--hostname","127.0.0.1","--port",String(port)],{cwd:process.cwd(),windowsHide:true,env:{...process.env,SIMULATOR_DATA_DIR:directory,SIMULATOR_REFERENCE_DIR:fixtureLibrary.imageDir,OLLAMA_BASE_URL:mockUrl,OLLAMA_MODEL:"qwen3.5:4b",ZHIPU_API_KEY:"local-test-only",ZHIPU_BASE_URL:mockUrl,DEEPSEEK_API_KEY:"local-test-only",DEEPSEEK_BASE_URL:mockUrl,NEXT_TELEMETRY_DISABLED:"1"}});
+  child=spawn(process.execPath,["node_modules/next/dist/bin/next","start","--hostname","127.0.0.1","--port",String(port)],{cwd:process.cwd(),windowsHide:true,env:{...process.env,SIMULATOR_DATA_DIR:directory,SIMULATOR_REFERENCE_DIR:"",OLLAMA_BASE_URL:mockUrl,OLLAMA_MODEL:"qwen3.5:4b",ZHIPU_API_KEY:"local-test-only",ZHIPU_BASE_URL:mockUrl,DEEPSEEK_API_KEY:"local-test-only",DEEPSEEK_BASE_URL:mockUrl,NEXT_TELEMETRY_DISABLED:"1"}});
   child.stdout.on("data",chunk=>logs+=chunk);child.stderr.on("data",chunk=>logs+=chunk);
   await until(async()=>{try{return(await fetch(base)).ok;}catch{return false;}});
 }
@@ -53,8 +53,38 @@ async function createDefault(key=randomUUID()) {const r=await fetch(base+"/api/t
 async function status(id) {const r=await fetch(base+"/api/tests/"+id);assert.equal(r.status,200,await r.clone().text());return r.json();}
 async function terminal(id) {return until(async()=>{const t=await status(id);return ["completed","failed","cancelled"].includes(t.status)?t:null;});}
 async function post(url,body) {return fetch(base+url,{method:"POST",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(body)});}
+async function verifyGeneratedReferences(id, count, height) {
+  const resultDir = path.join(directory, "results", id);
+  const exported = JSON.parse(fs.readFileSync(path.join(resultDir, "result.json"), "utf8"));
+  assert.equal(exported.referenceCovers.length, count);
+  const response = await fetch(base + "/api/tests/" + id + "/references");
+  assert.equal(response.status, 200);
+  const { references } = await response.json();
+  assert.equal(references.length, count);
+  assert.equal(new Set(references.map(r => r.id)).size, count);
+  for (const reference of references) {
+    const source = referenceLibrary.find(r => r.id === reference.id);
+    assert.ok(source, "selected reference belongs to active generated library");
+    assert.equal(reference.title, source.title);
+    const image = await fetch(base + reference.url);
+    assert.equal(image.status, 200);
+    assert.equal(createHash("sha256").update(Buffer.from(await image.arrayBuffer())).digest("hex"), createHash("sha256").update(fs.readFileSync(path.join("public/reference-covers", source.fileName))).digest("hex"));
+  }
+  assert.equal(exported.feedPreviews.length, 2);
+  assert.deepEqual(exported.feedPreviews[0].cardOrder, exported.feedPreviews[1].cardOrder);
+  for (const preview of exported.feedPreviews) {
+    const bytes = fs.readFileSync(path.join(resultDir, preview.fileName));
+    const metadata = await sharp(bytes).metadata();
+    await sharp(bytes).raw().toBuffer();
+    assert.equal(metadata.width, 1080);
+    assert.equal(metadata.height, height);
+  }
+}
 try {
   await start();
+  const page = await (await fetch(base)).text();
+  assert.match(page, /参考图库已接入 100 张模拟封面/);
+  assert.match(page, /并非真实发布的封面/);
   assert.equal((await fetch(base+"/api/tests",{method:"POST"})).status,403);
   assert.equal((await fetch(base+"/api/tests",{method:"POST",headers:{...headers,origin:"http://evil.invalid"}})).status,403);
   assert.equal(await new Promise((resolve,reject)=>{
@@ -68,6 +98,7 @@ try {
   assert.equal(requests,200);assert.equal(result.apiUsage.requestCount,200);assert.equal(result.apiUsage.totalTokens,22000);assert.equal(result.winnerKey,"tie");assert.equal(result.validTrials,200);assert.ok(Number.isInteger(result.durationMs)&&result.durationMs>=0);
   const historyAfterCompletion=await (await fetch(base+"/api/tests/history")).json();const historyResult=historyAfterCompletion.tests.find(test=>test.id===id);assert.ok(historyResult);assert.equal(historyResult.durationMs,result.durationMs);
   assert.equal((await fetch(base+result.feedPreviewUrl)).status,200);
+  await verifyGeneratedReferences(id, 3, 1440);
   const exported=JSON.parse(fs.readFileSync(path.join(directory,"results",id,"result.json"),"utf8"));assert.equal(exported.comparison.winnerKey,result.winnerKey);
   let saved=await post("/api/validation/result",{simulationTestId:id,realWinner:"A"});assert.equal(saved.status,201,await saved.clone().text());
   saved=await post("/api/validation",{records:[{validationId:"different-id",simulationTestId:id,validationStatus:"valid",validationType:"prospective",realWinner:"B",model:"forged-model"}]});
@@ -79,6 +110,7 @@ try {
   mode="vertical";requests=0;peak=0;
   const vertical=await terminal(await create());
   assert.equal(vertical.status,"completed",JSON.stringify(vertical));assert.equal(requests,200);assert.ok(peak<=2);assert.equal(vertical.validTrials,200);assert.equal(vertical.apiUsage.totalTokens,22000);
+  await verifyGeneratedReferences(vertical.id, 9, 3696);
   console.log(`PASS GLM vertical / real images / 200 requests / concurrency <= 2 (observed ${peak}) / usage`);
   mode="failure";requests=0;const failed=await terminal(await create());assert.equal(failed.status,"failed");const failureCalls=requests;await delay(300);assert.equal(requests,failureCalls);assert.ok(requests<=5);assert.ok(failed.apiUsage.requestCount>=requests && failed.apiUsage.requestCount<=5);
   console.log(`PASS failure stops requests (${requests} in-flight maximum observed)`);

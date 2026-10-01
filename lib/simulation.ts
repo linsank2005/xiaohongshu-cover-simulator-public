@@ -215,7 +215,7 @@ export async function runSimulation(testId: string, candidates: TestCandidate[],
         }
         const feedDataUrl = await feed;
         await ensureSimulationActive(testId, simulation);
-        if (!feedPreviews[candidate.key]) {
+        if (index === 0) {
           feedPreviews[candidate.key] = { dataUrl: feedDataUrl, order };
         }
         const result = await callWithRetry({ testId, variantKey: candidate.key, agentId: agent.id, provider,

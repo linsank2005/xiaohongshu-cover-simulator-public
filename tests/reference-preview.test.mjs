@@ -16,8 +16,8 @@ test("完整样图库包含 100 个独立编号、有效图片与逐张参考记
   assert.equal(manifest.expectedCount, 100);
   assert.equal(manifest.completedCount, 100);
   assert.equal(manifest.samples.length, 100);
-  assert.equal(manifest.status, "pending-user-review");
-  assert.equal(manifest.activeLibrary, false);
+  assert.equal(manifest.status, "active");
+  assert.equal(manifest.activeLibrary, true);
   assert.equal(manifest.originalReferenceAssetsIncluded, false);
   assert.equal(manifest.generationStrategy, "one-original-per-call");
   assert.equal(new Set(manifest.samples.map(s => s.referenceKey)).size, 100);
@@ -27,6 +27,7 @@ test("完整样图库包含 100 个独立编号、有效图片与逐张参考记
     assert.equal(sample.fileName, `sim-${String(index + 1).padStart(3, "0")}.png`);
     assert.equal(sample.referencedImageCount, 1);
     assert.equal(sample.completionStatus, "generated");
+    assert.equal(sample.reviewStatus, "approved");
     assert.ok(sample.prompt.length > 100);
     const bytes = fs.readFileSync(path.join(directory, sample.fileName));
     const metadata = await sharp(bytes).metadata();
@@ -39,12 +40,27 @@ test("完整样图库包含 100 个独立编号、有效图片与逐张参考记
     assert.ok(relativeRatioError < 0.025, `${sample.referenceKey}: aspect ratio changed`);
     if (sample.reusedFrom) {
       assert.deepEqual(bytes, fs.readFileSync(path.resolve(directory, sample.reusedFrom)));
-      assert.equal(sample.reviewStatus, "approved-sample");
     }
   }
   const text = JSON.stringify(manifest);
   assert.doesNotMatch(text, /xsec_token|noteId|xiaohongshu\.com|[A-Z]:[\\/]|https?:\/\//i);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "data/reference-covers.json"), "utf8")), []);
+  const runtime = JSON.parse(fs.readFileSync(path.join(root, "data/reference-covers.json"), "utf8"));
+  assert.equal(runtime.length, 100);
+  assert.deepEqual(runtime.map(r => r.id), manifest.samples.map(s => s.referenceKey));
+  assert.equal(new Set(runtime.map(r => r.track)).size, 20);
+  for (const sample of manifest.samples) {
+    const reference = runtime.find(r => r.id === sample.referenceKey);
+    assert.equal(reference.title, sample.title);
+    assert.equal(reference.category, sample.category);
+    assert.equal(reference.track, sample.track);
+    assert.equal(reference.source, "imagegen");
+    assert.equal(reference.noteId, "");
+    assert.equal(reference.weight, sample.samplingWeight);
+    assert.ok(reference.weight > 0);
+    assert.equal(reference.fileName, sample.fileName);
+    assert.equal(createHash("sha256").update(fs.readFileSync(path.join(root, "public/reference-covers", reference.fileName))).digest("hex"), sample.sha256);
+  }
+  assert.deepEqual(fs.readdirSync(path.join(root, "public/reference-covers")).filter(f => /\.(png|jpg|webp)$/i.test(f)).sort(), runtime.map(r => r.fileName).sort());
 });
 
 test("统一预览嵌入完整清单并安全呈现可筛选和放大的图片", () => {

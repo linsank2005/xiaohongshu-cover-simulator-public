@@ -5,7 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
-test("five reference-matched samples are intact, individually referenced, and isolated from the active library", async () => {
+test("five reference-matched samples are intact and reused in the approved active library", async () => {
   const directory = path.join(process.cwd(), "previews", "reference-matched-samples");
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"));
   assert.equal(manifest.status, "pending-user-review");
@@ -45,5 +45,10 @@ test("five reference-matched samples are intact, individually referenced, and is
   assert.doesNotMatch(JSON.stringify(manifest), /xsec_token=|xiaohongshu\.com|[A-Z]:\\/);
   const imageNames = fs.readdirSync(directory).filter((fileName) => /\.(png|webp|jpg)$/i.test(fileName));
   assert.deepEqual(imageNames.sort(), manifest.samples.map((sample) => sample.fileName).sort());
-  assert.deepEqual(JSON.parse(fs.readFileSync("data/reference-covers.json", "utf8")), []);
+  const runtime = JSON.parse(fs.readFileSync("data/reference-covers.json", "utf8"));
+  for (const sample of manifest.samples) {
+    const reference = runtime.find(r => r.id === sample.referenceKey);
+    assert.ok(reference);
+    assert.equal(createHash("sha256").update(fs.readFileSync(path.join("public/reference-covers", reference.fileName))).digest("hex"), sample.sha256);
+  }
 });

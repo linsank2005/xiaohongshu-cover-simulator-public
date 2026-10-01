@@ -30,5 +30,9 @@ test("three superseded samples decode, preserve their recorded bytes, and stay o
     assert.ok(sample.prompt.length > 100);
     assert.doesNotMatch(sample.prompt, /xsec_token=|[A-Z]:\\/);
   }
-  assert.deepEqual(JSON.parse(fs.readFileSync("data/reference-covers.json", "utf8")), []);
+  const runtime = JSON.parse(fs.readFileSync("data/reference-covers.json", "utf8"));
+  for (const reference of runtime) {
+    const hash = createHash("sha256").update(fs.readFileSync(path.join("public/reference-covers", reference.fileName))).digest("hex");
+    assert.equal(hashes.has(hash), false, "superseded image entered active library");
+  }
 });

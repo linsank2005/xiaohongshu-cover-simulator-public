@@ -51,6 +51,27 @@ test("vertical full trial flow accepts J and produces 10/100 per cover", async t
   assert.deepEqual((await getChoiceStats(f.id)).variants.map(v => v.coverSelectedCount), [10,10]);
 });
 
+test("paired previews keep agent zero's order when other renders finish first", async t => {
+  isolated(t);
+  const f = await fixture({ testMode: "vertical" });
+  const expected = createBalancedCardOrders(f.randomSeed, 100, "vertical")[0];
+  let exported;
+  let firstFinished;
+  await run(f, {
+    renderFeed: async (_images, order) => {
+      if (order.join("") === expected.join("")) await new Promise(resolve => setTimeout(resolve, 40));
+      firstFinished ??= order;
+      return "data:image/jpeg;base64,eA==";
+    },
+    transport: async () => response("J"),
+    exportResult: async input => { exported = input; }
+  }, "vertical");
+  assert.notDeepEqual(firstFinished, expected, "regression must exercise out-of-order rendering");
+  assert.equal((await getTest(f.id)).status, "completed");
+  assert.deepEqual(exported.feedPreviews.A.order, expected);
+  assert.deepEqual(exported.feedPreviews.B.order, expected);
+});
+
 test("first fatal failure stops dispatch and aborts other in-flight requests", async t => {
   isolated(t); const f = await fixture(); let calls = 0; let aborted = 0;
   await run(f, { transport: async (_url, init) => {
