@@ -14,6 +14,6 @@
 
 `data/reference-covers.json` 保持空数组。页面可启动，完整模拟参考图库接入前，封面测试会提示图库尚未完成。
 
-接下来先用内置 imagegen 生成 3 张样图，存放于 `previews/reference-cover-samples/`，交由用户确认。样图不进入测试竞争池。
+已用内置 imagegen 生成 3 张样图，存放于 [样图预览](../previews/reference-cover-samples/README.md)，目前待用户确认。样图不进入测试竞争池。
 
 用户确认样图后再扩展到 100 张并接入参考图库。匿名反馈、正式公开发布及其他功能留待后续步骤。

@@ -1,0 +1,39 @@
+{
+  "status": "pending-user-review",
+  "tool": "builtin-imagegen",
+  "generatedOn": "2026-10-01",
+  "activeLibrary": false,
+  "originalReferenceAssetsIncluded": false,
+  "samples": [
+    {
+      "fileName": "01-workplace.png",
+      "title": "职场新人，把工作做稳的5个习惯",
+      "category": "工作与成长",
+      "track": "职场",
+      "prompt": "Use case: ads-marketing. Asset type: an ORIGINAL simulated Chinese social-media reference cover, single portrait 3:4 image. The supplied image is ONLY a broad genre/style reference: learn the large readable Chinese headline, light paper background, and illustration-led workplace cover. Generate a completely new cover with new illustration, new composition, new wording, new colors. Do not edit, trace, retain, or reproduce its character, office, exact typography arrangement or text. New design: slightly warm ivory paper; dark navy bold Chinese headline occupying upper half; below, a fresh editorial flat-color illustration of an adult Asian office worker with short bob haircut and round glasses, teal cardigan, shown in side profile organizing a notebook at a small uncluttered desk near a window, a few yellow sticky notes. Elegant but ordinary social feed cover, clear at thumbnail size, not a corporate poster. Text verbatim arranged naturally across lines: '职场新人' / '把工作做稳的' / '5个习惯'. Small bottom caption verbatim '从清晰沟通开始'. Exact legible Simplified Chinese, no other text. Muted teal, navy and warm cream. No real brand, logo, account handle, watermark or imitation of the reference character. Output one finished cover only, full bleed, portrait 3:4.",
+      "width": 1086,
+      "height": 1448,
+      "sha256": "519ef75e6cf07252c4b5d5896d25a20050f8724b4fabe05d077ee731a9729da2"
+    },
+    {
+      "fileName": "02-home.png",
+      "title": "把小客厅布置成喜欢的样子",
+      "category": "生活方式",
+      "track": "家居",
+      "prompt": "Use case: photorealistic-natural. Asset type: a newly generated ORIGINAL simulated Chinese lifestyle home reference cover, single portrait 3:4 photo. Input is ONLY a broad mood/genre reference for warm, lived-in natural-light interior phone photography. Create an entirely different imaginary apartment, new furniture, new layout, new light direction and camera framing; do not reproduce or edit the reference room or objects. New scene: modest cozy small living room, wide bay window on the left with sheer linen curtains and afternoon sunlight, compact sage-green fabric sofa on the right, rounded low oak coffee table with a ceramic mug and an open blank notebook, a low wooden bookcase on the back wall, woven pendant shade positioned in upper right, one small leafy plant near the window. Eye-level smartphone snapshot from the doorway, believable modest home, slight natural imperfections and gentle film grain, calm warm atmosphere, clear physical details, no dramatic luxury, no excessive staged decoration, no hyper-polished 3D look. Text: NONE. No logo, no watermark, no account name, no human face. Single full-bleed portrait 3:4 cover.",
+      "width": 1086,
+      "height": 1448,
+      "sha256": "0816b4f3858c1cfc7c9bc8e494dde7e9e8215d6e5fd18f4e9920bba32743b164"
+    },
+    {
+      "fileName": "03-travel.png",
+      "title": "清晨沿着湖边慢慢走",
+      "category": "生活方式",
+      "track": "旅行",
+      "prompt": "Use case: photorealistic-natural. Asset type: a newly generated ORIGINAL simulated travel social-feed reference cover, single portrait 3:4 image. Input is ONLY a broad genre/mood reference for Chinese scenic travel photography: layered green mountains, quiet water, soft mist. Create a fresh imaginary lakeside landscape with entirely different mountain silhouettes, shoreline, composition, lighting and foreground. Do not recreate the reference landmarks, raft, person, birds, houses or their placement. New scene: a quiet curved lakeshore at early morning, low layered rounded forested hills rather than steep signature peaks, small wooden footbridge entering from lower right toward the center-left with no people, reeds on the near shore, subtle peach reflection from the morning sky, thin low mist over pale green water, natural humid atmosphere. Travel creator smartphone photograph, plausible restrained colors, realistic texture, soft detailed daylight, some cloud detail, visually readable at a thumbnail, no fantasy landscape, no oversaturated cinematic sun rays. Text: NONE. No brand logo, account handle or watermark. Single full-bleed portrait 3:4 cover.",
+      "width": 1086,
+      "height": 1448,
+      "sha256": "7148bd5beec514cc3fe053b8e660ccdb34530f517433d6da67c0679619b8be0e"
+    }
+  ]
+}
