@@ -25,6 +25,7 @@ type ExportInput = {
   }>;
   noneSelectedCount: number;
   model: string;
+  modelConfig?: import("./model-settings").ModelConfigSnapshot;
   promptVersion: string;
   variantStats?: CandidateStats[];
   randomSeed?: string;
@@ -110,6 +111,7 @@ export async function exportTestResult(input: ExportInput) {
     apiUsage: input.apiUsage ?? null,
     title: input.title,
     model: input.model,
+    modelConfig: input.modelConfig ?? null,
     promptVersion: input.promptVersion,
     testMode: input.testMode,
     testModeLabel: input.testMode === "vertical" ? "纵向信息流" : "四宫格",

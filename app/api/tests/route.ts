@@ -9,20 +9,13 @@ import { isModelProvider, type ModelProvider } from "@/lib/model-options";
 import { chooseRandomReferences, loadReferenceLibrary } from "@/lib/reference-library";
 import { runSimulation } from "@/lib/simulation";
 import { isTestMode, type TestMode } from "@/lib/types";
+import { runtimeModelConfig } from "@/lib/model-settings";
+import { assertOllamaReady } from "@/lib/ollama";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const allowedTypes = new Map([["image/jpeg", "jpg"], ["image/png", "png"], ["image/webp", "webp"]]);
-
-function apiKeyForProvider(provider: ModelProvider) {
-  if (provider === "ollama") return "local-ollama";
-  return provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : process.env.ZHIPU_API_KEY;
-}
-
-function apiKeyNameForProvider(provider: ModelProvider) {
-  return provider === "deepseek" ? "DEEPSEEK_API_KEY" : "ZHIPU_API_KEY";
-}
 
 export async function POST(request: Request) {
   const writtenPaths: string[] = [];
@@ -51,8 +44,9 @@ export async function POST(request: Request) {
       if (!isTestMode(rawTestMode)) return Response.json({ error: "测试场景无效" }, { status: 400 });
       testMode = rawTestMode;
     }
-    if (!apiKeyForProvider(provider)) {
-      return Response.json({ error: `未配置 ${apiKeyNameForProvider(provider)}，真实测试无法开始` }, { status: 400 });
+    const modelConfig = runtimeModelConfig(provider, testMode);
+    if (!modelConfig.apiKey) {
+      return Response.json({ error: "尚未配置 API Key，请打开页面右上角的模型设置" }, { status: 400 });
     }
     for (const cover of covers) {
       if (!allowedTypes.has(cover.type)) return Response.json({ error: "仅支持 JPG、PNG、WEBP 图片" }, { status: 400 });
@@ -60,6 +54,7 @@ export async function POST(request: Request) {
     }
     const title = rawTitle.trim();
     if (title.length > 80) return Response.json({ error: "标题不能超过 80 个字符" }, { status: 400 });
+    if (provider === "ollama") await assertOllamaReady(modelConfig.baseUrl, modelConfig.model);
 
     const images = await Promise.all(covers.map(async cover => {
       const bytes = Buffer.from(await cover.arrayBuffer());
@@ -97,7 +92,7 @@ export async function POST(request: Request) {
     });
     if (!created.created) return Response.json({ id: created.id }, { status: 202 });
     accepted = true;
-    void runSimulation(id, candidates, references, title, provider, randomSeed, testMode).catch(error => {
+    void runSimulation(id, candidates, references, title, provider, randomSeed, testMode, { modelConfig }).catch(error => {
       console.error("测试执行器异常", { id, message: error instanceof Error ? error.message : "未知错误" });
     });
     return Response.json({ id }, { status: 202 });

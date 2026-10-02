@@ -41,6 +41,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   return Response.json({
     id: test.id,
     title: test.title,
+    provider: test.provider,
+    modelConfig: test.modelConfig,
+    notes: test.notes,
     createdAt: test.createdAt,
     completedAt: test.completedAt,
     durationMs: testDurationMs(test.createdAt, test.completedAt),

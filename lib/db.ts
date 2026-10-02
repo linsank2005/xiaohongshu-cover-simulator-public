@@ -51,10 +51,10 @@ export async function createTest(test: {
   });
 }
 
-export async function startTest(id: string, metadata?: { model: string; promptVersion: string }) {
+export async function startTest(id: string, metadata?: { model: string; promptVersion: string; provider?: import("./model-options").ModelProvider; modelConfig?: import("./model-settings").ModelConfigSnapshot }) {
   recoverInterruptedTests();
-  return getDatabase().prepare("UPDATE tests SET status = 'running', owner_id = ?, owner_pid = ?, heartbeat_at = ?, model = COALESCE(?, model), prompt_version = COALESCE(?, prompt_version), error_message = NULL WHERE id = ? AND status = 'pending'")
-    .run(ownerId, process.pid, Date.now(), metadata?.model ?? null, metadata?.promptVersion ?? null, id).changes > 0;
+  return getDatabase().prepare("UPDATE tests SET status = 'running', owner_id = ?, owner_pid = ?, heartbeat_at = ?, model = COALESCE(?, model), prompt_version = COALESCE(?, prompt_version), model_provider = COALESCE(?, model_provider), model_config = COALESCE(?, model_config), error_message = NULL WHERE id = ? AND status = 'pending'")
+    .run(ownerId, process.pid, Date.now(), metadata?.model ?? null, metadata?.promptVersion ?? null, metadata?.provider ?? null, metadata?.modelConfig ? JSON.stringify(metadata.modelConfig) : null, id).changes > 0;
 }
 
 export function heartbeatTest(id: string) {
@@ -180,6 +180,9 @@ function rowToTest(row: Record<string, unknown>): StoredTest {
     simulatedClickRate: row.simulated_click_rate === null || row.simulated_click_rate === undefined ? null : Number(row.simulated_click_rate),
     noneSelectedCount: row.none_selected_count === null || row.none_selected_count === undefined ? null : Number(row.none_selected_count),
     model: row.model === null || row.model === undefined ? null : String(row.model),
+    provider: row.model_provider === null || row.model_provider === undefined ? null : String(row.model_provider) as import("./model-options").ModelProvider,
+    modelConfig: row.model_config ? JSON.parse(String(row.model_config)) : null,
+    notes: String(row.notes ?? ""),
     promptVersion: row.prompt_version === null || row.prompt_version === undefined ? null : String(row.prompt_version),
     errorMessage: row.error_message === null || row.error_message === undefined ? null : String(row.error_message),
     cancelReason: row.cancel_reason === null || row.cancel_reason === undefined ? null : String(row.cancel_reason),

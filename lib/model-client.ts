@@ -2,25 +2,13 @@ import type { ModelProvider } from "./model-options";
 import type { ModelChoice, TestMode } from "./types";
 import { cardNamesForMode, isValidChoice } from "./result-rules";
 import { beginModelRequest, finishModelRequest, MAX_MODEL_ATTEMPTS, type ProviderUsage } from "./api-usage";
-import { fetchModel, modelRequestPolicy, networkFailure } from "./model-transport";
+import { fetchModel, networkFailure } from "./model-transport";
 import type { RequestDiagnostic } from "./api-usage";
 
-const BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
-const MODEL = process.env.DEEPSEEK_MODEL || "deepseek-flash";
-const ZHIPU_BASE_URL = process.env.ZHIPU_BASE_URL || "https://open.bigmodel.cn/api/paas/v4";
-const ZHIPU_MODEL = process.env.ZHIPU_MODEL || "glm-5.3-flash";
-const ZHIPU_GLM_46V_MODEL = process.env.ZHIPU_GLM_46V_MODEL || "glm-4.6v";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3.5:4b";
+import { runtimeModelConfig, readModelSettings, normalizeModelUrl, type RuntimeModelConfig } from "./model-settings";
 
 export function ollamaBaseUrl() {
-  const url = new URL(process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434");
-  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
-  if (url.protocol !== "http:" || !loopback || url.username || url.password || url.search || url.hash) {
-    throw new Error("OLLAMA_BASE_URL 必须是本机 HTTP 回环地址");
-  }
-  const pathname = url.pathname.replace(/\/+$/, "");
-  if (pathname && pathname !== "/v1") throw new Error("OLLAMA_BASE_URL 路径必须为空或 /v1");
-  return url.origin;
+  return normalizeModelUrl(readModelSettings().ollama.baseUrl, true);
 }
 
 export class InvalidModelChoiceError extends Error {}
@@ -57,91 +45,37 @@ function modelContentToText(content: unknown) {
 }
 
 export function modelNameForProvider(provider: ModelProvider) {
-  if (provider === "ollama") return OLLAMA_MODEL;
-  if (provider === "deepseek") return MODEL;
-  if (provider === "zhipu") return ZHIPU_MODEL;
-  return ZHIPU_GLM_46V_MODEL;
+  return runtimeModelConfig(provider).model;
 }
 
-function providerLabel(provider: ModelProvider) {
-  if (provider === "ollama") return "本机 Qwen3.5 4B";
-  if (provider === "deepseek") return "DeepSeek";
-  if (provider === "zhipu") return "GLM-5.3-Flash";
-  return "GLM-4.6V";
-}
-
-function providerConfig(provider: ModelProvider) {
-  if (provider === "ollama") {
-    return {
-      label: providerLabel(provider), apiKey: "ollama", apiEnvName: null,
-      url: `${ollamaBaseUrl()}/api/chat`, model: OLLAMA_MODEL,
-      responseFormat: false, nativeOllama: true, extraBody: {}
-    };
-  }
-  if (provider === "deepseek") {
-    return {
-      label: providerLabel(provider),
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      apiEnvName: "DEEPSEEK_API_KEY",
-      url: `${BASE_URL.replace(/\/+$/, "")}/chat/completions`,
-      model: MODEL,
-      responseFormat: true, nativeOllama: false,
-      extraBody: { thinking: { type: "disabled" } }
-    };
-  }
-  if (provider === "zhipu") {
-    return {
-      label: providerLabel(provider),
-      apiKey: process.env.ZHIPU_API_KEY,
-      apiEnvName: "ZHIPU_API_KEY",
-      url: `${ZHIPU_BASE_URL.replace(/\/+$/, "")}/chat/completions`,
-      model: ZHIPU_MODEL,
-      responseFormat: true, nativeOllama: false,
-      extraBody: { temperature: 1, top_p: 0.95, reasoning_effort: "low", thinking: { type: "enabled" } }
-    };
-  }
-  return {
-    label: providerLabel(provider),
-    apiKey: process.env.ZHIPU_API_KEY,
-    apiEnvName: "ZHIPU_API_KEY",
-    url: `${ZHIPU_BASE_URL.replace(/\/+$/, "")}/chat/completions`,
-    model: ZHIPU_GLM_46V_MODEL,
-    responseFormat: false, nativeOllama: false,
-    extraBody: { thinking: { type: "disabled" } }
+export function buildModelRequest(config: RuntimeModelConfig, prompt: string, feedDataUrl: string, testMode: TestMode) {
+  return config.nativeOllama ? {
+    model: config.model,
+    messages: [{ role: "user", content: prompt, images: [feedDataUrl.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "")] }],
+    stream: false, think: false, keep_alive: "10m",
+    format: { type: "object", properties: { choice: { type: "string", enum: [...cardNamesForMode(testMode), "NONE"] } }, required: ["choice"], additionalProperties: false },
+    options: { num_ctx: config.contextLength, num_predict: config.maxTokens, temperature: 0.2, top_p: 0.9 }
+  } : {
+    model: config.model,
+    messages: [{ role: "user", content: [ { type: "text", text: prompt }, { type: "image_url", image_url: { url: feedDataUrl, detail: "high" } } ] }],
+    ...(config.responseFormat ? { response_format: { type: "json_object" } } : {}),
+    max_tokens: config.maxTokens,
+    ...(config.provider === "zhipu" ? { temperature: 1, top_p: 0.95, reasoning_effort: "low", thinking: { type: "enabled" } } : { thinking: { type: "disabled" } })
   };
 }
-
 
 export type ModelCall = {
   testId: string; variantKey: string; agentId: string; provider: ModelProvider;
   prompt: string; feedDataUrl: string; testMode: TestMode; control: SimulationControl;
-  transport?: typeof fetch; timeoutMs?: number; retryDelayMs?: number;
+  transport?: typeof fetch; timeoutMs?: number; retryDelayMs?: number; config?: RuntimeModelConfig;
 };
 
 async function askModel(call: ModelCall, attempt: number): Promise<ModelChoice> {
-  const config = providerConfig(call.provider);
-  if (!config.apiKey) throw new Error(`未配置 ${config.apiEnvName}，真实测试无法开始`);
+  const config = call.config ?? runtimeModelConfig(call.provider, call.testMode);
+  if (!config.apiKey) throw new Error("尚未配置 API Key，请打开页面右上角的模型设置");
   call.control.check();
   const controller = new AbortController();
-  const body = JSON.stringify(config.nativeOllama ? {
-    model: config.model,
-    messages: [{ role: "user", content: call.prompt, images: [call.feedDataUrl.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "")] }],
-    stream: false, think: false, keep_alive: "10m",
-    format: {
-      type: "object",
-      properties: { choice: { type: "string", enum: [...cardNamesForMode(call.testMode), "NONE"] } },
-      required: ["choice"], additionalProperties: false
-    },
-    options: { num_ctx: 8192, num_predict: 256, temperature: 0.2, top_p: 0.9 }
-  } : {
-    model: config.model,
-    messages: [{ role: "user", content: [
-      { type: "text", text: call.prompt },
-      { type: "image_url", image_url: { url: call.feedDataUrl, detail: "high" } }
-    ] }],
-    ...(config.responseFormat ? { response_format: { type: "json_object" } } : {}),
-    max_tokens: 256, ...config.extraBody
-  });
+  const body = JSON.stringify(buildModelRequest(config, call.prompt, call.feedDataUrl, call.testMode));
   let status = "network_error";
   let usage: ProviderUsage | undefined;
   let receivedHeaders = false;
@@ -150,7 +84,7 @@ async function askModel(call: ModelCall, attempt: number): Promise<ModelChoice> 
   // The reservation also checks persistent cancellation and execution ownership.
   const requestId = beginModelRequest(call.testId, call.variantKey, call.agentId, attempt);
   call.control.controllers.add(controller);
-  const timeout = setTimeout(() => controller.abort(), call.timeoutMs ?? modelRequestPolicy(call.provider, call.testMode).timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), call.timeoutMs ?? config.timeoutMs);
   try {
     const response = await (call.transport ?? fetchModel)(config.url, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
@@ -214,7 +148,8 @@ async function askModel(call: ModelCall, attempt: number): Promise<ModelChoice> 
   }
 }
 
-export async function callWithRetry(call: ModelCall) {
+export async function callWithRetry(input: ModelCall) {
+  const call = { ...input, config: input.config ?? runtimeModelConfig(input.provider, input.testMode) };
   for (let attempt = 0; attempt < MAX_MODEL_ATTEMPTS; attempt++) {
     call.control.check();
     try { return { choice: await askModel(call, attempt), retryCount: attempt }; }

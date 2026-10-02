@@ -92,6 +92,9 @@ export type StoredTest = {
   simulatedClickRate: number | null;
   noneSelectedCount: number | null;
   model: string | null;
+  provider: import("./model-options").ModelProvider | null;
+  modelConfig: import("./model-settings").ModelConfigSnapshot | null;
+  notes: string;
   promptVersion: string | null;
   errorMessage: string | null;
   cancelReason: string | null;

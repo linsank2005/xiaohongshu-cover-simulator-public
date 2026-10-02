@@ -89,7 +89,8 @@ test("GLM vertical runtime limits concurrency to two and preserves all 200 judgm
   assert.equal(peak, 2); assert.equal(calls, 200); assert.equal((await getTest(f.id)).status, "completed");
 });
 
-test("local Qwen is the first/default option and Ollama URL is restricted to loopback", () => {
+test("local Qwen is the first/default option and Ollama URL is restricted to loopback", t => {
+  isolated(t);
   assert.equal(MODEL_OPTIONS[0].id, "ollama");
   assert.equal(isModelProvider("ollama"), true);
   assert.equal(modelNameForProvider("ollama"), "qwen3.5:4b");
@@ -101,7 +102,7 @@ test("local Qwen is the first/default option and Ollama URL is restricted to loo
     }
     for (const value of ["https://127.0.0.1:11434/v1", "http://example.com/v1", "http://127.0.0.1:11434/api", "http://user:pass@127.0.0.1:11434/v1"]) {
       process.env.OLLAMA_BASE_URL = value;
-      assert.throws(() => ollamaBaseUrl(), /本机 HTTP 回环地址|路径必须/);
+      assert.throws(() => ollamaBaseUrl(), /本机 HTTP 回环地址|路径必须|不能包含密钥/);
     }
   } finally {
     if (original === undefined) delete process.env.OLLAMA_BASE_URL; else process.env.OLLAMA_BASE_URL = original;

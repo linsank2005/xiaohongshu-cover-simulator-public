@@ -5,13 +5,14 @@ import { loadAgents } from "./agents";
 import { buildAgentPrompt } from "./agent-prompt";
 import { assertTestRunning, heartbeatTest, completeTest, getTest, isTestCancellationRequested, markTestCancelled, saveTrial, startTest, failTest } from "./db";
 import type { ModelProvider } from "./model-options";
+import { runtimeModelConfig, modelConfigSnapshot, type RuntimeModelConfig } from "./model-settings";
 import { exportTestResult } from "./result-export";
 import { VERTICAL_CARD_NAMES } from "./types";
 import { cardNamesForMode } from "./result-rules";
 import { MAX_IMAGE_PIXELS } from "./upload-image";
 import { getApiUsage } from "./api-usage";
-import { SimulationControl, TestCancelledError, callWithRetry, modelNameForProvider } from "./model-client";
-import { modelRequestPolicy } from "./model-transport";
+import { SimulationControl, TestCancelledError, callWithRetry } from "./model-client";
+
 import { referenceImageDirectory } from "./reference-library";
 import type { AgentProfile, CandidateStats, ModelChoice, ReferenceCover, TestCandidate, TestMode } from "./types";
 export { parseModelChoice } from "./model-client";
@@ -169,6 +170,7 @@ type TrialOutcome = {
 };
 
 export type SimulationDependencies = {
+  modelConfig?: RuntimeModelConfig;
   transport?: typeof fetch;
   prepareImages?: (paths: string[], titles: string[]) => Promise<Buffer[]>;
   renderFeed?: (images: Buffer[], order: string[], mode: TestMode) => Promise<string>;
@@ -177,7 +179,8 @@ export type SimulationDependencies = {
 
 export async function runSimulation(testId: string, candidates: TestCandidate[], references: ReferenceCover[], title: string, provider: ModelProvider = "ollama", randomSeed = testId, testMode: TestMode = "grid", dependencies: SimulationDependencies = {}) {
   // Claim once, before creating any worker or loading mutable input. Duplicate dispatch is a no-op.
-  if (!await startTest(testId, { model: modelNameForProvider(provider), promptVersion: PROMPT_VERSION })) return;
+  const config = dependencies.modelConfig ?? runtimeModelConfig(provider, testMode);
+  if (!await startTest(testId, { model: config.model, promptVersion: PROMPT_VERSION, provider, modelConfig: modelConfigSnapshot(config) })) return;
   const simulation = new SimulationControl();
   activeSimulations.set(testId, simulation);
   let lastHeartbeat = 0;
@@ -219,7 +222,7 @@ export async function runSimulation(testId: string, candidates: TestCandidate[],
           feedPreviews[candidate.key] = { dataUrl: feedDataUrl, order };
         }
         const result = await callWithRetry({ testId, variantKey: candidate.key, agentId: agent.id, provider,
-          prompt, feedDataUrl, testMode, control: simulation, transport: dependencies.transport });
+          prompt, feedDataUrl, testMode, control: simulation, transport: dependencies.transport, config });
         await ensureSimulationActive(testId, simulation);
         const outcome = {
           variantKey: candidate.key,
@@ -239,12 +242,12 @@ export async function runSimulation(testId: string, candidates: TestCandidate[],
           targetCard: outcome.targetCard,
           cardOrder: outcome.cardOrder,
           chosenCard: outcome.chosenCard,
-          model: modelNameForProvider(provider),
+          model: config.model,
           promptVersion: PROMPT_VERSION,
           retryCount: outcome.retryCount
         });
         outcomes.push(outcome);
-      }, simulation, modelRequestPolicy(provider, testMode).concurrency);
+      }, simulation, config.concurrency);
     }
 
     await ensureSimulationActive(testId, simulation);
@@ -298,7 +301,8 @@ export async function runSimulation(testId: string, candidates: TestCandidate[],
         totalTrials,
         validTrials: outcomes.length,
         noneSelectedCount: primaryStats.noneSelectedCount,
-        model: modelNameForProvider(provider),
+        model: config.model,
+        modelConfig: modelConfigSnapshot(config),
         promptVersion: PROMPT_VERSION,
         randomSeed,
         testMode,
@@ -318,7 +322,7 @@ export async function runSimulation(testId: string, candidates: TestCandidate[],
       validTrials: outcomes.length,
       requestCount: getApiUsage(testId).requestCount,
       noneSelectedCount: primaryStats.noneSelectedCount,
-      model: modelNameForProvider(provider),
+      model: config.model,
       promptVersion: PROMPT_VERSION
     });
     if (!completed) {

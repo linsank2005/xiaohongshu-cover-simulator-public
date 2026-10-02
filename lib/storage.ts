@@ -6,6 +6,23 @@ import { normalizeValidationRecord } from "./validation";
 export const dataDirectory = () => path.resolve(process.env.SIMULATOR_DATA_DIR || path.join(process.cwd(), "data"));
 const connections = new Map<string, DatabaseSync>();
 
+// SQLite can return SQLITE_BUSY immediately when concurrent cold connections
+// switch journal mode. Set busy_timeout first, then retry only lock conflicts.
+export function retryDatabaseBusy<T>(work: () => T, timeoutMs = 10_000): T {
+  const deadline = Date.now() + timeoutMs;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  let delay = 20;
+  for (;;) {
+    try { return work(); }
+    catch (error) {
+      const code = (error as { errcode?: number }).errcode;
+      if (code === undefined || ![5, 6].includes(code & 255) || Date.now() >= deadline) throw error;
+      Atomics.wait(pause, 0, 0, Math.min(delay, deadline - Date.now()));
+      delay = Math.min(delay * 2, 200);
+    }
+  }
+}
+
 export function transaction<T>(database: DatabaseSync, work: () => T): T {
   database.exec("BEGIN IMMEDIATE");
   try {
@@ -25,8 +42,9 @@ export function getDatabase() {
   fs.mkdirSync(directory, { recursive: true });
   const database = new DatabaseSync(path.join(directory, "simulator.db"));
   try {
-    database.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-    transaction(database, () => {
+    database.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
+    retryDatabaseBusy(() => database.exec("PRAGMA journal_mode = WAL;"));
+    retryDatabaseBusy(() => transaction(database, () => {
       database.exec(`
         CREATE TABLE IF NOT EXISTS tests (
           id TEXT PRIMARY KEY, uploaded_path TEXT NOT NULL, reference_ids TEXT NOT NULL,
@@ -45,6 +63,13 @@ export function getDatabase() {
           simulation_test_id TEXT PRIMARY KEY, record_json TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS file_cleanup (test_id TEXT PRIMARY KEY, test_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS local_settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS imported_records (
+          origin_id TEXT NOT NULL, test_id TEXT NOT NULL, record_json TEXT NOT NULL,
+          cover_paths TEXT NOT NULL DEFAULT '{}', notes TEXT,
+          imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (origin_id, test_id)
+        );
         CREATE TABLE IF NOT EXISTS api_requests (
           id TEXT PRIMARY KEY, test_id TEXT NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
           variant_key TEXT NOT NULL, agent_id TEXT NOT NULL, attempt INTEGER NOT NULL,
@@ -62,7 +87,8 @@ export function getDatabase() {
           request_count: "INTEGER NOT NULL DEFAULT 0", none_selected_count: "INTEGER", model: "TEXT",
           prompt_version: "TEXT", error_message: "TEXT", cancel_reason: "TEXT", cancelled_at: "TEXT",
           owner_id: "TEXT", owner_pid: "INTEGER", heartbeat_at: "INTEGER", request_key: "TEXT",
-          usage_tracked: "INTEGER NOT NULL DEFAULT 0"
+          usage_tracked: "INTEGER NOT NULL DEFAULT 0", notes: "TEXT NOT NULL DEFAULT ''",
+          model_provider: "TEXT", model_config: "TEXT"
         },
         trials: { variant_key: "TEXT NOT NULL DEFAULT 'A'", retry_count: "INTEGER NOT NULL DEFAULT 0" },
         api_requests: { error_code: "TEXT", error_message: "TEXT", http_status: "INTEGER", provider_code: "TEXT", elapsed_ms: "INTEGER", request_bytes: "INTEGER" }
@@ -106,7 +132,7 @@ export function getDatabase() {
         }
         database.prepare("INSERT INTO migrations VALUES ('validation-json')").run();
       }
-    });
+    }));
     connections.set(directory, database);
     return database;
   } catch (error) {

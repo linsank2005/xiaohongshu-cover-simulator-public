@@ -15,6 +15,12 @@ const headers = { "x-simulator-client": "local" };
 let mode = "normal", requests = 0, active = 0, peak = 0;
 let child, base, logs = "";
 const mock = http.createServer(async (req, res) => {
+  if (req.url === "/api/tags") { res.setHeader("Content-Type","application/json"); res.end(JSON.stringify({models:[{name:"qwen3.5:4b",size:3389983735}]})); return; }
+  if (req.url === "/api/show") {
+    let text=""; for await (const chunk of req) text+=chunk;
+    const input=JSON.parse(text);res.setHeader("Content-Type","application/json");
+    res.end(JSON.stringify({capabilities:input.model === "text-only" ? ["completion"] : ["completion","vision"]}));return;
+  }
   requests++; active++; peak = Math.max(peak, active);
   res.on("close", () => active--);
   let body = ""; for await (const chunk of req) body += chunk;
@@ -85,6 +91,15 @@ try {
   const page = await (await fetch(base)).text();
   assert.match(page, /参考图库已接入 100 张模拟封面/);
   assert.match(page, /并非真实发布的封面/);
+  const settings=await (await fetch(base+"/api/settings")).json();
+  assert.equal(settings.providers.zhipu.apiKeyConfigured,true);assert.ok(!JSON.stringify(settings).includes("local-test-only"));
+  const updateSettings=async body=>fetch(base+"/api/settings",{method:"PATCH",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  assert.equal((await updateSettings({provider:"ollama",model:"text-only"})).status,200);
+  const textOnly=await fetch(base+"/api/tests",{method:"POST",headers,body:form(randomUUID(),png,"")});
+  assert.equal(textOnly.status,400);assert.match(await textOnly.text(),/不支持图片识别/);assert.equal(requests,0);
+  assert.equal((await updateSettings({provider:"ollama",model:"qwen3.5:4b"})).status,200);
+  const checked=await post("/api/settings/check",{provider:"zhipu"});assert.equal(checked.status,200);assert.equal((await checked.json()).connected,true);assert.equal(requests,1);requests=0;
+  console.log("PASS masked settings / vision capability preflight / explicit single-call connection check");
   assert.equal((await fetch(base+"/api/tests",{method:"POST"})).status,403);
   assert.equal((await fetch(base+"/api/tests",{method:"POST",headers:{...headers,origin:"http://evil.invalid"}})).status,403);
   assert.equal(await new Promise((resolve,reject)=>{
@@ -115,6 +130,7 @@ try {
   mode="failure";requests=0;const failed=await terminal(await create());assert.equal(failed.status,"failed");const failureCalls=requests;await delay(300);assert.equal(requests,failureCalls);assert.ok(requests<=5);assert.ok(failed.apiUsage.requestCount>=requests && failed.apiUsage.requestCount<=5);
   console.log(`PASS failure stops requests (${requests} in-flight maximum observed)`);
   mode="hold";requests=0;const cancelledId=await create();await until(()=>requests>0);
+  assert.equal((await updateSettings({provider:"ollama",model:"qwen3.5:9b"})).status,409);
   const cancel=await post("/api/tests/"+cancelledId+"/cancel",{});assert.equal(cancel.status,202);const cancelled=await terminal(cancelledId);assert.equal(cancelled.status,"cancelled");const cancelCalls=requests;await delay(300);assert.equal(requests,cancelCalls);assert.ok(requests<=5);assert.ok(cancelled.apiUsage.requestCount>=requests && cancelled.apiUsage.requestCount<=5);assert.equal(cancelled.apiUsage.unknownUsageRequests,cancelled.apiUsage.requestCount);
   console.log("PASS cancellation aborts in-flight waits and preserves unknown usage");
   requests=0;const interruptedId=await create();await until(()=>requests>0);await stop();await start();const interrupted=await terminal(interruptedId);assert.equal(interrupted.status,"failed");assert.ok(interrupted.apiUsage.statuses.interrupted>=requests && interrupted.apiUsage.statuses.interrupted<=5);
