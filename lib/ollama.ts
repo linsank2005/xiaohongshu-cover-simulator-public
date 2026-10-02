@@ -1,17 +1,19 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { normalizeModelUrl, readModelSettings } from "./model-settings";
 
 export type OllamaModel = { name: string; size: number; vision: boolean; local: boolean; message: string };
 export function ollamaAddress(value?: string) {
   return normalizeModelUrl(value ?? readModelSettings().ollama.baseUrl, true);
 }
-async function metadataRequest(baseUrl: string, endpoint: string, body?: unknown) {
+async function metadataRequest(baseUrl: string, endpoint: string, body?: unknown, timeout = 15_000) {
   let response: Response;
   try {
     response = await fetch(`${ollamaAddress(baseUrl)}${endpoint}`, {
       method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(15_000), cache: "no-store", redirect: "error"
+      signal: AbortSignal.timeout(timeout), cache: "no-store", redirect: "error"
     });
   } catch { throw new Error("无法连接本机 Ollama，请先启动服务并检查地址"); }
   if (!response.ok) throw new Error(response.status === 404 ? "模型尚未安装，请先下载该模型" : `Ollama 检测失败（HTTP ${response.status}）`);
@@ -47,8 +49,15 @@ export async function assertOllamaReady(baseUrl: string, model: string) {
 }
 export async function startLocalOllama(value?: string) {
   const baseUrl = ollamaAddress(value);
-  try { await metadataRequest(baseUrl, "/api/version"); return { connected: true, alreadyRunning: true }; } catch { /* Start only if the selected loopback endpoint is unavailable. */ }
-  const child = spawn("ollama", ["serve"], {
+  try { await metadataRequest(baseUrl, "/api/version", undefined, 1000); return { connected: true, alreadyRunning: true }; } catch { /* Start only if the selected loopback endpoint is unavailable. */ }
+  let executable = "ollama";
+  // The install button may have been used after this server started, so its PATH
+  // can be stale. The standard Windows install location works without a restart.
+  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    const installed = path.join(process.env.LOCALAPPDATA, "Programs", "Ollama", "ollama.exe");
+    try { await fs.access(installed); executable = installed; } catch { /* Use PATH for custom installations. */ }
+  }
+  const child = spawn(executable, ["serve"], {
     windowsHide: true, detached: true, stdio: "ignore",
     env: { ...process.env, OLLAMA_HOST: new URL(baseUrl).host }
   });
@@ -57,8 +66,9 @@ export async function startLocalOllama(value?: string) {
     child.once("error", () => reject(new Error("未找到 Ollama，请先安装，再重新打开本工具")));
   });
   child.unref();
-  for (let index = 0; index < 30; index++) {
-    try { await metadataRequest(baseUrl, "/api/version"); return { connected: true, alreadyRunning: false }; } catch { await new Promise(resolve => setTimeout(resolve, 300)); }
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    try { await metadataRequest(baseUrl, "/api/version", undefined, 1000); return { connected: true, alreadyRunning: false }; } catch { await new Promise(resolve => setTimeout(resolve, 300)); }
   }
   throw new Error("Ollama 启动后仍未就绪，请打开 Ollama 应用或运行 ollama serve");
 }

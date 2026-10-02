@@ -132,6 +132,9 @@ export async function saveTrial(trial: {
     if (!(JSON.parse(String(row.candidate_paths)) as TestCandidate[]).some(c => c.key === trial.variantKey)) throw new Error("未知的候选版本");
     db.prepare("INSERT INTO trials (test_id, variant_key, agent_id, repetition, target_card, card_order, chosen_card, model, prompt_version, retry_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(trial.testId, trial.variantKey, trial.agentId, trial.repetition, trial.targetCard, JSON.stringify(trial.cardOrder), trial.chosenCard, trial.model, trial.promptVersion, trial.retryCount);
+    // Persist progress in the same transaction as the valid judgment. Failed or
+    // duplicate inserts cannot advance the counter shown by the live page.
+    db.prepare("UPDATE tests SET valid_trials = valid_trials + 1 WHERE id = ?").run(trial.testId);
   });
 }
 
@@ -196,6 +199,11 @@ export async function getCompletedDualCoverTests(): Promise<StoredTest[]> {
   return getDatabase().prepare("SELECT * FROM tests WHERE status = 'completed' AND candidate_count = 2 ORDER BY COALESCE(completed_at, created_at) DESC").all().map(rowToTest);
 }
 
+export async function getAllDualCoverTests(): Promise<StoredTest[]> {
+  recoverInterruptedTests();
+  return getDatabase().prepare("SELECT * FROM tests WHERE candidate_count = 2 ORDER BY created_at DESC").all().map(rowToTest);
+}
+
 export async function getTest(id: string): Promise<StoredTest | null> {
   recoverInterruptedTests();
   const row = getDatabase().prepare("SELECT * FROM tests WHERE id = ?").get(id);
@@ -205,7 +213,7 @@ export async function getTest(id: string): Promise<StoredTest | null> {
 export async function deleteTest(id: string) {
   const db = getDatabase();
   return transaction(db, () => {
-    const row = db.prepare("SELECT * FROM tests WHERE id = ? AND status = 'completed'").get(id);
+    const row = db.prepare("SELECT * FROM tests WHERE id = ? AND status IN ('completed','failed','cancelled')").get(id);
     if (!row) return null;
     const removedValidationCount = Number(db.prepare("DELETE FROM validation_records WHERE simulation_test_id = ?").run(id).changes);
     const test = rowToTest(row);

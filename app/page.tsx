@@ -5,6 +5,10 @@ import { determineWinner } from "@/lib/result-rules";
 import { MODEL_OPTIONS, type ModelProvider } from "@/lib/model-options";
 import type { TestMode } from "@/lib/types";
 import type { ValidationRecord, ValidationStats } from "@/lib/validation";
+import type { ModelSettingsResponse } from "@/lib/model-settings";
+import ModelSettingsDialog from "./components/ModelSettingsDialog";
+import RecordsPanel from "./components/RecordsPanel";
+import { formatLocalDate } from "@/lib/display-date";
 
 type TestState = "idle" | "pending" | "uploading" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
 
@@ -44,6 +48,7 @@ type TestStatus = {
   cancelReason?: string | null;
   cancelledAt?: string | null;
   model?: string | null;
+  provider?: ModelProvider | null;
   promptVersion?: string | null;
   durationMs?: number | null;
   error?: string;
@@ -77,7 +82,7 @@ type HistoryTest = {
 };
 
 type HistoryResponse = { tests: HistoryTest[] };
-type PageTab = "test" | "validation";
+type PageTab = "test" | "records" | "validation";
 
 const LAST_TEST_KEY = "xhs-cover-simulator:last-test-id";
 const AGENTS_PER_VARIANT = 100;
@@ -87,6 +92,9 @@ export default function HomePage() {
   const [files, setFiles] = useState<Array<File | null>>([null, null]);
   const [title, setTitle] = useState("");
   const [modelProvider, setModelProvider] = useState<ModelProvider>("ollama");
+  const [modelSettings, setModelSettings] = useState<ModelSettingsResponse | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localConnection, setLocalConnection] = useState("正在检查本机模型…");
   const [testMode, setTestMode] = useState<TestMode>("grid");
   const [previewUrls, setPreviewUrls] = useState<Array<string | null>>([null, null]);
   const [candidateViews, setCandidateViews] = useState<CandidateView[]>([]);
@@ -117,7 +125,21 @@ export default function HomePage() {
 
   useEffect(() => {
     void Promise.all([loadValidation(), loadHistory()]);
+    fetch("/api/settings", { cache: "no-store" }).then(response => response.ok ? response.json() : null).then(setModelSettings).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!modelSettings || modelProvider !== "ollama") return;
+    const controller = new AbortController(); const config = modelSettings.providers.ollama;
+    setLocalConnection("正在检查本机模型…");
+    fetch(`/api/ollama?baseUrl=${encodeURIComponent(config.baseUrl)}`, { signal: controller.signal, cache: "no-store" }).then(async response => {
+      const data = await response.json();
+      if (!response.ok) throw Error("Ollama 未就绪，打开设置查看启动指引");
+      const selected = data.models.find((item: { name: string }) => item.name === config.model || item.name === `${config.model}:latest`);
+      setLocalConnection(selected?.vision && selected.local ? `已连接 · ${config.model} 支持本地图片识别` : "所选模型尚未就绪，打开设置下载或选择图片模型");
+    }).catch(error => { if (!controller.signal.aborted) setLocalConnection(error instanceof Error ? error.message : "Ollama 未就绪，打开设置查看指引"); });
+    return () => controller.abort();
+  }, [modelSettings, modelProvider]);
 
   useEffect(() => {
     const storedTestId = window.localStorage.getItem(LAST_TEST_KEY);
@@ -133,6 +155,7 @@ export default function HomePage() {
         setTest(restored);
         setTitle(restored.title ?? "");
         setTestMode(restored.testMode ?? "grid");
+        if (restored.provider) setModelProvider(restored.provider);
         if (restored.status === "failed") setError(restored.error ?? "真实模型测试失败，请重试");
         if (restored.status === "completed") await loadReferences(testId, cancelled);
       } catch {
@@ -313,6 +336,20 @@ export default function HomePage() {
     uploadInputRef.current.forEach((input) => { if (input) input.value = ""; });
   }
 
+  async function openRecordedTest(id: string) {
+    try {
+      const response = await fetch(`/api/tests/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!response.ok) throw Error("记录不存在，请刷新列表");
+      const restored = await response.json() as TestStatus;
+      resetForNewTest(); setTest(restored); setTitle(restored.title ?? ""); setTestMode(restored.testMode ?? "grid");
+      if (restored.provider) setModelProvider(restored.provider);
+      setCandidateViews((restored.candidates ?? []).map(c => ({ ...c, url: `/api/tests/${id}/cover?key=${c.key}` })));
+      if (restored.status === "failed") setError(restored.error ?? "该测试未完成");
+      if (restored.status === "completed") await loadReferences(id, false);
+      window.localStorage.setItem(LAST_TEST_KEY, id); setActiveTab("test");
+    } catch (error) { setError(error instanceof Error ? error.message : "打开记录失败"); setActiveTab("test"); }
+  }
+
   async function runTest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isSubmitting || test?.status === "running" || test?.status === "cancelling") return;
@@ -341,7 +378,8 @@ export default function HomePage() {
         totalTrials: AGENTS_PER_VARIANT * CANDIDATE_COUNT,
         candidateCount: CANDIDATE_COUNT,
         agentsPerVariant: AGENTS_PER_VARIANT,
-        testMode
+        testMode,
+        provider: modelProvider, model: modelSettings?.providers[modelProvider].model
       });
       window.localStorage.setItem(LAST_TEST_KEY, data.id);
       submissionKey.current = null;
@@ -374,15 +412,15 @@ export default function HomePage() {
   const visibleCoverUrls = previewUrls.some(Boolean)
     ? previewUrls
     : candidateViews.map((candidate) => candidate.url);
-  const selectedModelLabel = MODEL_OPTIONS.find((option) => option.id === modelProvider)?.label ?? MODEL_OPTIONS[0].label;
+  const selectedModelLabel = modelSettings?.providers[modelProvider].model ?? MODEL_OPTIONS.find((option) => option.id === modelProvider)?.label ?? "模型";
   const totalTrials = test?.totalTrials ?? AGENTS_PER_VARIANT * CANDIDATE_COUNT;
   const candidateResults = test?.variants ?? [];
   const winnerKey = determineWinner(candidateResults);
   const winner = candidateResults.find(candidate => candidate.key === winnerKey) ?? null;
-  const pendingValidationCount = history.filter((item) => !item.validation?.realWinner).length;
 
   return (
     <main className="page-shell">
+      <div className="app-topbar"><span>本地运行 · v0.8</span><button className="secondary-button" onClick={() => setSettingsOpen(true)} disabled={isRunning}>⚙ 模型设置</button></div>
       <section className="hero">
         <p className="eyebrow">XHS COVER SIMULATOR</p>
         <h1>小红书封面<br />AI 对比测试</h1>
@@ -390,7 +428,7 @@ export default function HomePage() {
       </section>
       <nav className="page-tabs" aria-label="页面功能切换" role="tablist">
         <button className="page-tab" type="button" role="tab" aria-selected={activeTab === "test"} onClick={() => setActiveTab("test")}>开始测试</button>
-        <button className="page-tab" type="button" role="tab" aria-selected={activeTab === "validation"} onClick={() => setActiveTab("validation")} disabled={isRunning}>真实 PK 校准{pendingValidationCount > 0 && <span className="page-tab-badge">{pendingValidationCount}</span>}</button>
+        <button className="page-tab" type="button" role="tab" aria-selected={activeTab !== "test"} onClick={() => setActiveTab("records")}>我的记录</button>
       </nav>
       {activeTab === "test" && <section className="workspace-card">
         <form onSubmit={runTest}>
@@ -410,10 +448,11 @@ export default function HomePage() {
           <label className="model-field" htmlFor="model-provider">
             <span>使用模型</span>
             <select id="model-provider" value={modelProvider} onChange={(event) => { setModelProvider(event.target.value as ModelProvider); setError(""); }} disabled={isRunning}>
-              {MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              {MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{modelSettings ? `${modelSettings.providers[option.id].model}（${option.id === "ollama" ? "本机 Ollama" : option.id === "deepseek" ? "DeepSeek" : "智谱"}）` : option.label}</option>)}
             </select>
-            {modelProvider === "ollama" && <small>完全在本机运行，无 API 费用。RTX 3060 Ti 8GB 使用单并发；完整双封面对比仍执行 200 次独立判断，预计耗时较长。</small>}
+            <small>{modelProvider === "ollama" ? "完全在本机运行，无 API 费用。两个版本各判断 100 次，耗时取决于模型和电脑配置。" : "候选封面会发送给所选模型服务，按服务商规则计费。"}</small>
           </label>
+          <div className="connection-status" role="status"><span>{modelProvider === "ollama" ? localConnection : modelSettings?.providers[modelProvider].apiKeyConfigured ? "API Key 已配置 · 可在设置中检测图片连接" : "尚未配置 API Key，请打开模型设置"}</span><button type="button" className="text-button" onClick={() => setSettingsOpen(true)} disabled={isRunning}>设置</button></div>
           <div className="candidate-upload-grid">
             {files.map((candidateFile, index) => {
               const key = String.fromCharCode(65 + index);
@@ -426,7 +465,7 @@ export default function HomePage() {
           <button className="primary-button" type="submit" disabled={files.some((file) => !file) || !title.trim() || isRunning}>{isRunning ? "AI 用户正在测试…" : "开始双封面对比"}</button>
         </form>
 
-        {isRunning && <div className="status-message" role="status">{test?.status === "cancelling" ? "正在取消测试，停止后续 API 请求…" : <>正在使用 {selectedModelLabel} 让两个版本各接受 100 次判断，请稍候<span className="loading-dots"><i /> <i /> <i /></span></>}</div>}
+        {isRunning && <div className="status-message" role="status">{test?.status === "cancelling" ? "正在取消测试，停止后续 API 请求…" : <>正在使用 {test?.model ?? selectedModelLabel} 让两个版本各接受 100 次判断<span className="loading-dots"><i /> <i /> <i /></span></>}<p className="help-text">已完成 {test?.validTrials ?? 0}/{totalTrials} 次判断 · 请求 {test?.requestCount ?? 0} 次（含重试）</p><progress value={test?.validTrials ?? 0} max={totalTrials} /></div>}
         {test && ["pending", "running"].includes(test.status) && <button className="cancel-button" type="button" onClick={cancelTest}>取消测试</button>}
         {test?.status === "cancelled" && <div className="cancelled-message" role="status">测试已取消，已完成的判断已保留，但不会作为完整结果。已发起请求：{test.requestCount ?? 0} 次。</div>}
 
@@ -434,7 +473,7 @@ export default function HomePage() {
         {isDone && candidateResults.length > 0 && <div className="result-block">
           <p className="result-label">同条件下的优先版本</p>
           <p className="result-number">{winner?.label ?? "差异接近"}{winner && <span>{winner.selectionRate}%</span>}</p>
-          <p className="result-meta">{candidateResults.map((variant) => variant.label + " " + variant.selectedCount + "/" + variant.totalTrials).join(" · ")} · 每个版本各接受 100 次判断{test.durationMs !== null && test.durationMs !== undefined ? ` · 总耗时 ${formatDuration(test.durationMs)}` : ""}</p>
+          <p className="result-meta">{candidateResults.map((variant) => variant.label + " " + variant.selectedCount + "/" + variant.totalTrials).join(" · ")} · 每个版本各接受 100 次判断{test.model ? ` · 模型 ${test.model}` : ""}{test.durationMs !== null && test.durationMs !== undefined ? ` · 总耗时 ${formatDuration(test.durationMs)}` : ""}</p>
           <div className="candidate-result-grid">
             {candidateResults.map((variant, index) => {
               const imageUrl = visibleCoverUrls[index] ?? candidateViews.find((candidate) => candidate.key === variant.key)?.url ?? null;
@@ -453,11 +492,14 @@ export default function HomePage() {
             <p>该结果用于比较封面版本，不等同于真实发布后的 CTR。</p>
           </div>
           <button className="restart-button" type="button" onClick={resetForNewTest}>重新测试两个新版本</button>
+          <p className="help-text">本次测试已自动保存到“我的记录”，可以添加备注或导出文件。</p>
         </div>}
         {(test?.status === "failed" || test?.status === "cancelled") && <button className="restart-button restart-after-error" type="button" onClick={resetForNewTest}>重新测试</button>}
         {error && <p className="error-message" role="alert">{error}</p>}
       </section>}
+      {activeTab === "records" && <RecordsPanel onOpen={id => void openRecordedTest(id)} onValidation={() => { void loadHistory(); void loadValidation(); setActiveTab("validation"); }} running={!!isRunning} />}
       {activeTab === "validation" && <section className="validation-card" aria-labelledby="validation-title">
+        <button className="text-button" onClick={() => setActiveTab("records")}>← 返回我的记录</button>
         <div className="validation-heading">
           <div>
             <p className="validation-eyebrow">REAL PK CALIBRATION</p>
@@ -516,13 +558,14 @@ export default function HomePage() {
         {validationMessage && <p className="validation-success" role="status">{validationMessage}</p>}
         {validationError && <p className="error-message" role="alert">{validationError}</p>}
       </section>}
+      <p className="footnote">记录与设置保存在本机；可自行导出分享，无需注册账号。</p>
+      {settingsOpen && <ModelSettingsDialog initialProvider={modelProvider} onClose={() => setSettingsOpen(false)} onSaved={setModelSettings} />}
     </main>
   );
 }
 
 function formatHistoryDate(value: string | null) {
-  if (!value) return "时间未知";
-  return value.replace("T", " ").replace("Z", "").slice(0, 16);
+  return formatLocalDate(value);
 }
 
 function formatDuration(durationMs: number) {

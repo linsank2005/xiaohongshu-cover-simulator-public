@@ -1,6 +1,7 @@
 {
   "name": "xiaohongshu-cover-simulator",
-  "version": "0.7.1",
+  "version": "0.8.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "npm run seed && next dev --hostname 127.0.0.1",
@@ -9,9 +10,12 @@
     "seed": "node scripts/seed-reference-covers.mjs",
     "test": "node --import tsx --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "test:integration": "node tests/http-regression.mjs"
+    "test:integration": "node tests/http-regression.mjs",
+    "launch": "node scripts/launch.mjs",
+    "release:bundle": "node scripts/release-bundle.mjs"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "next": "^15.5.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

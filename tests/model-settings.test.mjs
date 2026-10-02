@@ -7,7 +7,7 @@ import { publicModelSettings, readModelSettings, saveModelSettings, runtimeModel
 import { getDatabase, retryDatabaseBusy } from "../lib/storage.ts";
 import { getTest, requestTestCancellation } from "../lib/db.ts";
 import { runSimulation } from "../lib/simulation.ts";
-import { listOllamaModels, assertOllamaReady, pullOllamaModel } from "../lib/ollama.ts";
+import { listOllamaModels, assertOllamaReady, pullOllamaModel, startLocalOllama } from "../lib/ollama.ts";
 import { checkModelConnection } from "../lib/model-check.ts";
 
 test("local settings preserve masked keys across reads and share Zhipu credentials", t => {
@@ -81,11 +81,13 @@ test("Ollama discovery excludes text-only and cloud models; pulls stream progres
     if (req.url === "/api/tags") res.end(JSON.stringify({models:[{name:"vision"},{name:"text"},{name:"remote:cloud"}]}));
     else if (req.url === "/api/show") res.end(JSON.stringify({capabilities: input.model === "text" ? ["completion"] : ["completion","vision"], ...(input.model === "remote:cloud" ? {remote_model:"remote",remote_host:"https://cloud.invalid"}: {})}));
     else if (req.url === "/api/pull") res.end('{"status":"downloading","total":100,"completed":50}\n{"status":"success"}\n');
+    else if (req.url === "/api/version") res.end('{"version":"test"}');
     else {res.statusCode=404;res.end("{}");}
   });
   server.listen(0,"127.0.0.1"); await once(server,"listening");
   t.after(() => new Promise(resolve=>server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
+  assert.equal((await startLocalOllama(base)).alreadyRunning, true, "reuse an existing service without spawning or replacing it");
   const result = await listOllamaModels(base);
   assert.deepEqual(result.models.filter(m=>m.vision&&m.local).map(m=>m.name), ["vision"]);
   await assert.rejects(assertOllamaReady(base,"text"), /不支持图片识别/);

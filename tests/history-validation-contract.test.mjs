@@ -24,8 +24,10 @@ test("100 concurrent creates and 200 concurrent trial writes retain every row",a
   const f=fixtures[0];await startTest(f.id);
   await Promise.all(["A","B"].flatMap(v=>Array.from({length:100},(_,i)=>saveTrial(trial(f.id,i,v)))));
   assert.equal((await getChoiceStats(f.id)).totalTrials,200);
+  assert.equal((await getTest(f.id)).validTrials,200, "live progress includes every committed judgment before completion");
   await assert.rejects(saveTrial(trial(f.id,0)));
   assert.equal((await getChoiceStats(f.id)).totalTrials,200);
+  assert.equal((await getTest(f.id)).validTrials,200, "duplicate inserts do not advance progress");
 });
 
 test("separate processes share SQLite transactions without lost writes",async t=>{

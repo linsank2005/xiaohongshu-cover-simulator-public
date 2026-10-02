@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { randomUUID, createHash } from "node:crypto";
 import sharp from "sharp";
+import { zipSync, unzipSync } from "fflate";
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cover-http-"));
 const referenceLibrary = JSON.parse(fs.readFileSync("data/reference-covers.json", "utf8"));
@@ -15,6 +16,7 @@ const headers = { "x-simulator-client": "local" };
 let mode = "normal", requests = 0, active = 0, peak = 0;
 let child, base, logs = "";
 const mock = http.createServer(async (req, res) => {
+  try {
   if (req.url === "/api/tags") { res.setHeader("Content-Type","application/json"); res.end(JSON.stringify({models:[{name:"qwen3.5:4b",size:3389983735}]})); return; }
   if (req.url === "/api/show") {
     let text=""; for await (const chunk of req) text+=chunk;
@@ -35,6 +37,12 @@ const mock = http.createServer(async (req, res) => {
   if (mode === "vertical") { assert.equal(payload.model, "glm-4.6v"); await new Promise(resolve => setTimeout(resolve, 15)); }
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(ollamaRequest?{message:{content:'{"choice":"A"}'},done_reason:"stop",prompt_eval_count:100,eval_count:10}:{choices:[{message:{content:'{"choice":"A"}'},finish_reason:"stop"}],usage:{prompt_tokens:100,completion_tokens:10,total_tokens:110}}));
+  } catch (error) {
+    // A cancellation / executor restart can close an image upload mid-stream.
+    // This is the expected transport outcome for the mock, not a test failure.
+    if (req.aborted && error?.code === "ECONNRESET") return;
+    throw error;
+  }
 });
 mock.listen(0, "127.0.0.1");await once(mock,"listening");
 const mockUrl=`http://127.0.0.1:${mock.address().port}`;
@@ -89,8 +97,10 @@ async function verifyGeneratedReferences(id, count, height) {
 try {
   await start();
   const page = await (await fetch(base)).text();
+  assert.match(page, /<title>小红书封面 AI 对比测试<\/title>/);
   assert.match(page, /参考图库已接入 100 张模拟封面/);
   assert.match(page, /并非真实发布的封面/);
+  assert.match(page, /我的记录/); assert.match(page, /模型设置/);
   const settings=await (await fetch(base+"/api/settings")).json();
   assert.equal(settings.providers.zhipu.apiKeyConfigured,true);assert.ok(!JSON.stringify(settings).includes("local-test-only"));
   const updateSettings=async body=>fetch(base+"/api/settings",{method:"PATCH",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -119,8 +129,27 @@ try {
   saved=await post("/api/validation",{records:[{validationId:"different-id",simulationTestId:id,validationStatus:"valid",validationType:"prospective",realWinner:"B",model:"forged-model"}]});
   assert.equal(saved.status,201,await saved.clone().text());const calibration=await saved.json();assert.equal(calibration.records.length,1);assert.equal(calibration.stats.validCount,0);assert.notEqual(calibration.records[0].model,"forged-model");
   console.log("PASS full upload / 200 model calls / usage / export / calibration / duplicate submission");
+  const recordId = `local:${id}`;
+  const noteResponse = await fetch(base + "/api/records/" + encodeURIComponent(recordId), { method: "PATCH", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ notes: "HTTP 备注持久化" }) }); assert.equal(noteResponse.status, 200);
+  const recordsResponse = await (await fetch(base + "/api/records?q=" + encodeURIComponent("备注持久化"))).json(); assert.equal(recordsResponse.total, 1); assert.equal(recordsResponse.records[0].notes, "HTTP 备注持久化");
+  const jsonExport = await fetch(base + "/api/records/export?source=local"); assert.equal(jsonExport.status, 200); const portable = await jsonExport.json();
+  assert.equal(portable.records.length, 1); assert.equal(portable.records[0].realResult.winner, "B"); assert.equal(portable.records[0].variants[0].totalTrials, 100);
+  const portableText = JSON.stringify(portable); assert(!portableText.includes("local-test-only")); assert(!portableText.includes("apiKey")); assert(!portableText.includes(directory));
+  const zipExport = await fetch(base + "/api/records/export?includeCovers=1"); assert.equal(zipExport.status, 200); assert.equal(zipExport.headers.get("X-Missing-Covers"), "0");
+  const zipEntries = unzipSync(new Uint8Array(await zipExport.arrayBuffer())); const manifest = JSON.parse(Buffer.from(zipEntries["records.json"]).toString()); const foreignOrigin = randomUUID();
+  for (const record of manifest.records) { const original = record.originId; record.originId = foreignOrigin; for (const candidate of record.candidates) { const old = candidate.fileName; candidate.fileName = old.replace(original, foreignOrigin); zipEntries[candidate.fileName] = zipEntries[old]; delete zipEntries[old]; } }
+  zipEntries["records.json"] = Buffer.from(JSON.stringify(manifest));
+  const importedForm = new FormData(); importedForm.append("file", new Blob([zipSync(zipEntries)], { type: "application/zip" }), "records.zip");
+  const imported = await fetch(base + "/api/records/import", { method: "POST", headers, body: importedForm }); assert.equal(imported.status, 200, await imported.clone().text()); assert.equal((await imported.json()).created, 1);
+  let external = await (await fetch(base + "/api/records?source=imported")).json(); assert.equal(external.total, 1); assert.equal(external.records[0].notes, "HTTP 备注持久化"); assert.equal((await fetch(base + external.records[0].imageUrls.A)).status, 200);
+  assert.equal((await (await fetch(base + "/api/validation")).json()).records.length, 1, "file imports do not change calibration or simulation outcomes");
+  const repeated = await fetch(base + "/api/records/import", { method: "POST", headers, body: importedForm }); assert.equal(repeated.status, 200); assert.equal((await repeated.json()).updated, 1);
+  const importedDelete = await fetch(base + "/api/records/" + encodeURIComponent(external.records[0].id), { method: "DELETE", headers }); assert.equal(importedDelete.status, 200); assert.equal((await (await fetch(base + "/api/records?source=imported")).json()).total, 0); assert.equal(requests, 200);
+  console.log("PASS local notes / private JSON / portable cover ZIP / independent import / deduplication / delete");
   const deleted=await fetch(base+"/api/tests/"+id,{method:"DELETE",headers});assert.equal(deleted.status,200);assert.equal(fs.existsSync(path.join(directory,"results",id)),false);assert.equal((await (await fetch(base+"/api/validation")).json()).records.length,0);
-  requests=0;peak=0;const localDefault=await terminal(await createDefault());assert.equal(localDefault.status,"completed",JSON.stringify(localDefault));assert.equal(localDefault.model,"qwen3.5:4b");assert.equal(requests,200);assert.equal(peak,1);assert.equal(localDefault.validTrials,200);assert.equal(localDefault.apiUsage.totalTokens,22000);assert.ok(Number.isInteger(localDefault.durationMs)&&localDefault.durationMs>=0);
+  requests=0;peak=0;const localDefaultId=await createDefault();
+  const liveProgress=await until(async()=>{const s=await status(localDefaultId);return s.status==="running"&&s.validTrials>0&&s.validTrials<200?s:null;});assert.ok(liveProgress.validTrials<=liveProgress.requestCount);
+  const localDefault=await terminal(localDefaultId);assert.equal(localDefault.status,"completed",JSON.stringify(localDefault));assert.equal(localDefault.model,"qwen3.5:4b");assert.equal(requests,200);assert.equal(peak,1);assert.equal(localDefault.validTrials,200);assert.equal(localDefault.apiUsage.totalTokens,22000);assert.ok(Number.isInteger(localDefault.durationMs)&&localDefault.durationMs>=0);
   console.log("PASS default local Qwen / 200 model calls / serial execution / usage");
   mode="vertical";requests=0;peak=0;
   const vertical=await terminal(await create());
@@ -133,6 +162,9 @@ try {
   assert.equal((await updateSettings({provider:"ollama",model:"qwen3.5:9b"})).status,409);
   const cancel=await post("/api/tests/"+cancelledId+"/cancel",{});assert.equal(cancel.status,202);const cancelled=await terminal(cancelledId);assert.equal(cancelled.status,"cancelled");const cancelCalls=requests;await delay(300);assert.equal(requests,cancelCalls);assert.ok(requests<=5);assert.ok(cancelled.apiUsage.requestCount>=requests && cancelled.apiUsage.requestCount<=5);assert.equal(cancelled.apiUsage.unknownUsageRequests,cancelled.apiUsage.requestCount);
   console.log("PASS cancellation aborts in-flight waits and preserves unknown usage");
+  assert.equal((await fetch(base + "/api/tests/" + failed.id, { method: "DELETE", headers })).status, 200);
+  assert.equal((await fetch(base + "/api/records/" + encodeURIComponent(`local:${cancelledId}`), { method: "DELETE", headers })).status, 200);
+  console.log("PASS failed and cancelled records cleanup");
   requests=0;const interruptedId=await create();await until(()=>requests>0);await stop();await start();const interrupted=await terminal(interruptedId);assert.equal(interrupted.status,"failed");assert.ok(interrupted.apiUsage.statuses.interrupted>=requests && interrupted.apiUsage.statuses.interrupted<=5);
   console.log("PASS server restart recovers interrupted task without replaying API calls");
   console.log("HTTP regression complete; all model requests were served by the local mock.");

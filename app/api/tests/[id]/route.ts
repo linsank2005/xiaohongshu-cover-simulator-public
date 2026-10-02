@@ -83,7 +83,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   const { id } = await context.params;
   const test = await getTest(id);
   if (!test) return Response.json({ error: "测试不存在" }, { status: 404 });
-  if (test.status !== "completed" || test.candidates.length !== 2) return Response.json({ error: "只有已完成的双封面测试可以删除" }, { status: 400 });
+  if (!["completed", "failed", "cancelled"].includes(test.status) || test.candidates.length !== 2) return Response.json({ error: "只能删除已结束的双封面测试，请先取消正在执行的任务" }, { status: 400 });
   try {
     const deleted = await deleteTest(id);
     if (!deleted) return Response.json({ error: "测试不存在" }, { status: 404 });

@@ -8,6 +8,9 @@ data/*.db-wal
 data/uploads/*
 data/tmp/*
 data/results/*
+data/imported-covers/*
+data/launcher.lock
+dist/
 data/validation-records.json
 data/legacy-reference-covers/
 public/cover_sample_*/
