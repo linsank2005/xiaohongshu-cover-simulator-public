@@ -20,8 +20,8 @@
 
 设置页中的 Key 字段为空；记录页使用明确标注“非真实测试”的临时示例。截图是功能演示，不是模型效果或准确率证据。
 
-![模型设置](screenshots/model-settings.png)
+![模型设置](screenshots/model-settings.jpg)
 
-![本地记录示例](screenshots/local-records.png)
+![本地记录示例](screenshots/local-records.jpg)
 
-![首页](screenshots/home.png)
+![首页](screenshots/home.jpg)

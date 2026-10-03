@@ -50,6 +50,35 @@ test("README documents copyable run and verification commands", () => {
   assert.match(readme, /npm run start/);
 });
 
+test("README local links and screenshots exist in the distribution source", () => {
+  const readme = fs.readFileSync(readmePath, "utf8");
+  const links = [...readme.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g)].map(match => match[1]);
+  const images = [...readme.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)].map(match => match[1]);
+  for (const target of [...links, ...images]) {
+    if (/^(?:https?:\/\/|#)/.test(target)) continue;
+    const resolved = path.resolve(projectRoot, decodeURIComponent(target.split("#")[0]));
+    assert.ok(resolved.startsWith(projectRoot + path.sep), `link leaves project: ${target}`);
+    assert.ok(fs.statSync(resolved).isFile(), `missing README asset: ${target}`);
+  }
+  for (const target of images) {
+    const extension = path.extname(target);
+    assert.ok([".png", ".jpg"].includes(extension), `unsupported screenshot: ${target}`);
+    const signature = extension === ".png" ? Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]) : Buffer.from([255, 216, 255]);
+    assert.deepEqual(fs.readFileSync(path.join(projectRoot, target)).subarray(0, signature.length), signature, `invalid screenshot: ${target}`);
+  }
+});
+
+test("README gets first-time users from source download to a model-backed test", () => {
+  const readme = fs.readFileSync(readmePath, "utf8");
+  assert.match(readme, /archive\/refs\/heads\/main\.zip/);
+  assert.match(readme, /Code → Download ZIP/);
+  assert.match(readme, /22\.13/);
+  assert.match(readme, /start-windows\.cmd/);
+  assert.match(readme, /检测图片连接/);
+  assert.match(readme, /模型标记为 README-demo/);
+  assert.match(readme, /模拟选择率不等同于真实发布后的点击率/);
+});
+
 test("开源与数据贡献方案明确本地运行、授权和积分边界", () => {
   const plan = fs.readFileSync(openSourcePlanPath, "utf8");
   const readme = fs.readFileSync(readmePath, "utf8");
