@@ -125,7 +125,7 @@ async function localRecords(): Promise<RecordView[]> {
       apiUsage: { requestCount: usage.requestCount, retryCount: usage.retryCount, totalTokens: usage.totalTokens, unknownUsageRequests: usage.unknownUsageRequests },
       realResult: real?.realWinner ? { winner: real.realWinner, status: real.validationStatus, date: real.realPkDate ? `${real.realPkDate}T00:00:00Z` : null, notes: real.notes ?? "" } : null
     };
-    return { ...record, id: `local:${test.id}`, source: "local", imageUrls: Object.fromEntries(test.candidates.map(c => [c.key, `/api/tests/${encodeURIComponent(test.id)}/cover?key=${c.key}`])) };
+    return { ...record, id: `local:${test.id}`, source: "local", imageUrls: Object.fromEntries(test.candidates.map(c => [c.key, `/api/tests/${encodeURIComponent(test.id)}/cover?variant=${c.key}`])) };
   }));
 }
 function importedRecords(): RecordView[] {

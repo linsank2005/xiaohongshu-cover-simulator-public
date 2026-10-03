@@ -61,7 +61,8 @@ async function start() {
 }
 async function stop() {if(child&&child.exitCode===null){const exited=once(child,"exit");child.kill();await exited;}child=null;}
 const png=await sharp({create:{width:540,height:720,channels:3,background:"#eadecc"}}).png().toBuffer();
-function form(key,bytes=png,provider=mode === "vertical" ? "glm-4.6v" : "zhipu") {const f=new FormData();f.append("requestKey",key);f.append("title","HTTP 回归测试");if(provider)f.append("provider",provider);f.append("testMode",mode === "vertical" ? "vertical" : "grid");for(const name of ["a","b"])f.append("cover",new Blob([bytes],{type:"image/png"}),name+".png");return f;}
+const pngB=await sharp({create:{width:540,height:720,channels:3,background:"#8ba6d8"}}).png().toBuffer();
+function form(key,bytes=png,provider=mode === "vertical" ? "glm-4.6v" : "zhipu") {const f=new FormData();f.append("requestKey",key);f.append("title","HTTP 回归测试");if(provider)f.append("provider",provider);f.append("testMode",mode === "vertical" ? "vertical" : "grid");for(const name of ["a","b"])f.append("cover",new Blob([name==="b"&&bytes===png?pngB:bytes],{type:"image/png"}),name+".png");return f;}
 async function create(key=randomUUID()) {const r=await fetch(base+"/api/tests",{method:"POST",headers,body:form(key)});assert.equal(r.status,202,await r.clone().text());return (await r.json()).id;}
 async function createDefault(key=randomUUID()) {const r=await fetch(base+"/api/tests",{method:"POST",headers,body:form(key,png,"")});assert.equal(r.status,202,await r.clone().text());return (await r.json()).id;}
 async function status(id) {const r=await fetch(base+"/api/tests/"+id);assert.equal(r.status,200,await r.clone().text());return r.json();}
@@ -123,6 +124,13 @@ try {
   assert.equal(requests,200);assert.equal(result.apiUsage.requestCount,200);assert.equal(result.apiUsage.totalTokens,22000);assert.equal(result.winnerKey,"tie");assert.equal(result.validTrials,200);assert.ok(Number.isInteger(result.durationMs)&&result.durationMs>=0);
   const historyAfterCompletion=await (await fetch(base+"/api/tests/history")).json();const historyResult=historyAfterCompletion.tests.find(test=>test.id===id);assert.ok(historyResult);assert.equal(historyResult.durationMs,result.durationMs);
   assert.equal((await fetch(base+result.feedPreviewUrl)).status,200);
+  const {records:coverRecords}=await(await fetch(base+"/api/records?source=local")).json();
+  const coverRecord=coverRecords.find(record=>record.testId===id);assert.ok(coverRecord);
+  const imageA=await fetch(base+coverRecord.imageUrls.A),imageB=await fetch(base+coverRecord.imageUrls.B);
+  assert.equal(imageA.status,200);assert.equal(imageB.status,200);
+  const bytesA=Buffer.from(await imageA.arrayBuffer()),bytesB=Buffer.from(await imageB.arrayBuffer());
+  assert.deepEqual(bytesA,png);assert.deepEqual(bytesB,pngB);assert.notDeepEqual(bytesA,bytesB,"record thumbnails must retain their own A/B images");
+  console.log("PASS record thumbnail URLs return distinct original A/B images");
   await verifyGeneratedReferences(id, 3, 1440);
   const exported=JSON.parse(fs.readFileSync(path.join(directory,"results",id,"result.json"),"utf8"));assert.equal(exported.comparison.winnerKey,result.winnerKey);
   let saved=await post("/api/validation/result",{simulationTestId:id,realWinner:"A"});assert.equal(saved.status,201,await saved.clone().text());
