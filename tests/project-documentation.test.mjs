@@ -79,6 +79,18 @@ test("README gets first-time users from source download to a model-backed test",
   assert.match(readme, /模拟选择率不等同于真实发布后的点击率/);
 });
 
+test("README result examples use 10% and 15% with explicit demo provenance", () => {
+  const readme = fs.readFileSync(readmePath, "utf8");
+  const screenshotNotes = fs.readFileSync(path.join(projectRoot, "docs", "screenshots", "README.md"), "utf8");
+  assert.match(readme, /A 为 `10\/100`（10%）、B 为 `15\/100`（15%）/);
+  assert.match(readme, /固定示例响应生成，模型标记为 README-demo/);
+  assert.match(screenshotNotes, /A 被选中 10 次（10%），B 被选中 15 次（15%）/);
+  assert.match(screenshotNotes, /非真实模型结果/);
+  for (const document of [readme, screenshotNotes]) {
+    assert.doesNotMatch(document, /31\/100|44\/100|31%|44%|被选中 31 次|被选中 44 次/);
+  }
+});
+
 test("开源与数据贡献方案明确本地运行、授权和积分边界", () => {
   const plan = fs.readFileSync(openSourcePlanPath, "utf8");
   const readme = fs.readFileSync(readmePath, "utf8");
